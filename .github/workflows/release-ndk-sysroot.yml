@@ -1,0 +1,67 @@
+name: Release NDK Sysroot
+
+permissions: write-all
+
+on:
+  workflow_dispatch:
+    inputs:
+      ndk_zip:
+        description: 'NDK zip filename (e.g. android-ndk-r27c-linux.zip)'
+        required: true
+        default: 'android-ndk-r27c-linux.zip'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download NDK
+        run: |
+          echo "Downloading ${{ github.event.inputs.ndk_zip }} ..."
+          wget https://dl.google.com/android/repository/${{ github.event.inputs.ndk_zip }} -O ndk.zip
+
+      - name: Unzip NDK
+        run: |
+          unzip ndk.zip
+
+      - name: Compress sysroot
+        run: |
+          # Locate the NDK directory (assumes its name starts with "android-ndk-")
+          NDK_DIR=$(find . -maxdepth 1 -type d -name "android-ndk-*" | head -n 1)
+          if [ -z "$NDK_DIR" ]; then
+            echo "NDK directory not found." && exit 1
+          fi
+          SYSROOT_DIR="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          if [ ! -d "$SYSROOT_DIR" ]; then
+            echo "sysroot directory not found at $SYSROOT_DIR" && exit 1
+          fi
+          echo "Compressing sysroot from $SYSROOT_DIR..."
+          tar -czf sysroot.tar.gz -C "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64" sysroot
+
+      - name: Set Asset Name
+        id: set_asset_name
+        run: |
+          # Replace .zip with .tar.gz in the provided input name
+          asset_name="${{ github.event.inputs.ndk_zip }}"
+          asset_name="${asset_name%.zip}.tar.gz"
+          echo "asset_name=${asset_name}" >> $GITHUB_OUTPUT
+
+      - name: Set Tag Name
+        id: set_tag_name
+        run: |
+          # Extract the version from the input filename.
+          # Example: "android-ndk-r27c-linux.zip" becomes "r27c"
+          ndk_input="${{ github.event.inputs.ndk_zip }}"
+          tag="${ndk_input#android-ndk-}"
+          tag="${tag%-linux.zip}"
+          echo "tag_name=${tag}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ steps.set_tag_name.outputs.tag_name }} sysroot.tar.gz
+        shell: bash
+
